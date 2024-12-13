@@ -1,0 +1,476 @@
+---
+title: "UMass Chan Medical School - 3rd Year Clerkship Assessment Data"
+output: 
+  flexdashboard::flex_dashboard:
+        orientation: rows
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(shiny)
+library(scales)
+library(tidyr)
+library(kableExtra)
+```
+
+```{r warning=TRUE, include=FALSE}
+sheet <- excel_sheets("Data/AY1920-AY2122_FinalGrades.xlsx")
+FinalGrades <- lapply(setNames(sheet, sheet), function(x) read_excel("Data/AY1920-AY2122_FinalGrades.xlsx", sheet=x))
+FinalGrades <- bind_rows(FinalGrades, .id="Sheet")
+FinalGrades <- FinalGrades %>% 
+  rename("Acad_Year" = "Sheet")
+ComponentGrades <- read_excel ("Data/AY1920-AY2122_ComponentGrades.xlsx")
+ComponentGrades <- ComponentGrades %>%
+  mutate (SPE_new=SPE_Score/4 * 100)
+Grades <- FinalGrades %>% full_join(ComponentGrades, by=c('ID','Subject')) %>%
+  select(-(SPE_Score))
+Grades <- na.omit(Grades)
+Grades$FinalGrade_Letter<- as.factor(Grades$FinalGrade_Letter)
+Grades$FinalGrade_Letter<- factor(Grades$FinalGrade_Letter, levels = c("S","I","P","H","HH"), labels = c("Satisfactory", "Incomplete", "Pass", "Honors", "High Honors"))
+
+Grades <- Grades %>%
+  mutate (Clerkship = case_when (Subject == "FC" ~ "Family Medicine",
+                                 Subject == "ME" ~ "Medicine",
+                                 Subject == "NU" ~ "Neurology",
+                                 Subject == "OB" ~ "ObGyn",
+                                 Subject == "PE" ~ "Pediatrics",
+                                 Subject == "PS" ~ "Psychiatry",
+                                 Subject == "SU" ~ "Surgery",
+                                    TRUE ~ Subject))
+Grades <- Grades %>%
+  mutate (AcadYear = case_when (Acad_Year == "AY1920" ~ "AY19/20",
+                                 Acad_Year == "AY2021" ~ "AY20/21",
+                                 Acad_Year == "AY2122" ~ "AY21/22",
+                                    TRUE ~ Acad_Year))
+Grades <- Grades %>%
+  mutate (Sex = case_when (Gender == "M" ~ "Male",
+                           Gender == "F" ~ "Female",
+                           Gender == "U" ~ "Unspecified",
+                           TRUE ~ Gender))
+
+Grades <- Grades %>%
+  mutate (Location_new = case_when 
+        (Location == "UMMHC-8 East" ~ "UMMHC-University Campus",
+          Location == "UMMHC-C/L" ~ "UMMHC-University Campus",
+          Location == "UMMHC-Memorial Colorectal" ~ "UMMHC-Memorial Campus",
+          Location == "UMMHC-Memorial MIS" ~ "UMMHC-Memorial Campus",
+          Location == "UMMHC-Memorial Surgical Oncology" ~ "UMMHC-Memorial Campus",
+          Location == "UMMHC-University ACS" ~ "UMMHC-University Campus",
+          Location == "UMMHC-University Haidak" ~ "UMMHC-University Campus",
+          Location == "Worcester Recovery Center and Hospital - Adolescent Unit" ~ "Worcester Recovery Center and Hospital",
+          Location == "Worcester Recovery Center and Hospital - Adult Unit" ~ "Worcester Recovery Center and Hospital",
+          TRUE ~ Location))
+```
+
+INTRO
+=====================================  
+
+Column {.sidebar data-width=200}
+-------------------------------------
+
+Michele Carlin<br>
+DACSS-604 Final Project<br>
+Fall 2024
+
+Column {data-width=400}
+-------------------------------------
+
+### <strong>Background</strong>
+
+Throughout their third year of medical school, students complete seven different clerkships/rotations, one in each of the following areas: Family Medicine, Medicine, Neurology, ObGyn, Pediatrics, Psychiatry, and Surgery. 
+
+Within each clerkship, students are assessed in a variety of ways to determine if they have sufficiently mastered the knowledge and skills in each clerkship. These grading components (e.g., SPE, OSCE, NBME) are discussed in more detail on their specific pages.
+
+### <strong>About the Dataset</strong>
+
+Data Source: UMass Medical School Institutional Data. Student names and IDs were removed and replaced with randomly assigned IDs.
+
+Number of observations = 3139<br>
+    - approx. 150 students x 7 clerkships x 3 years of data
+
+Number of variables = 21<br>
+    - including the following that were used for this project: Academic Year, ID, Sex, Ethnicity, Clerkship, Location, SPE Score, OSCE Score, NBME Score, Final Numeric Score, Final Letter Grade
+
+Column {data-width=400}
+-------------------------------------
+### <strong>Research Questions</strong>
+
+1. Within each clerkship, are component scores comparable across gender and ethnic groups? 
+
+2. Are students performing similarly regardless of what location they were randomly assigned to. 
+
+3. Is the distribution of final letter grades similar from year to year?
+
+
+### <strong>Descriptive Analysis</strong>
+
+```{r}
+Table1 <- Grades %>%
+  group_by(AcadYear) %>%
+  summarise(n = sum(!is.na(FinalGrade_Numeric)),
+            Avg_SPE = round(mean(SPE_new), digits=2),
+            Avg_OSCE = round(mean(OSCE_Score), digits=2),
+            Avg_NBME = round(mean(NBME_Score), digits=2),
+            Avg_FINAL = round(mean(FinalGrade_Numeric), digits=2)) 
+
+Table1 %>%
+  kbl() %>%
+  #twitter bootstrap theme
+kable_styling()
+```
+
+SPE
+=====================================  
+
+Inputs {.sidebar}
+-------------------------------------
+```{r}
+selectInput("clerkships","Select a Clerkship:",
+              choices = sort(unique(Grades$Clerkship)))
+
+selectInput("years", "Select an Academic Year:",
+              choices = sort(unique(Grades$AcadYear)),
+              selected = "AY20/21")
+``` 
+
+Row {data-height=20%}
+-------------------------------------
+    
+### <strong>Student Performance Evaluations (SPEs)</strong>
+
+Within each clerkship, SPEs are completed by the various physicians the medical students work with in the clinical setting, with an average score calculated across all SPEs.
+
+Stratifying by location assists academic leaders in determining if physicians at certain locations are stricter, or more lenient, than others which could signify a need for additional faculty development. 
+
+Row {data-height=80%}
+-------------------------------------
+    
+### <strong>SPE Scores by Ethnicity & Sex</strong>
+    
+```{r}
+reactive_df <- reactive(
+  Grades %>% 
+    filter(Clerkship == input$clerkships, AcadYear == input$years) %>%
+    filter(Sex != "Unspecified") %>%
+    filter(Ethnicity != "American Indian or Alaska Native" & Ethnicity != "Native Hawaiian or Other Pacific Islander" & Ethnicity != "Race and Ethnicity Unknown") %>%
+    filter(Location_new != "NA" & Location_new != "Pioneer Valley Area" & Location_new != "Southeast Area")
+)
+
+  renderPlot(
+  ggplot(reactive_df(), aes(x=SPE_new, y=Ethnicity, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+  
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+    
+### <strong>SPE Scores by Location & Sex</strong>
+
+```{r}
+renderPlot(
+  ggplot(reactive_df(), aes(x=SPE_new, y=Location_new, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+ 
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+
+OSCE
+=====================================  
+
+Inputs {.sidebar}
+-------------------------------------
+```{r}
+selectInput("clerkships","Select a Clerkship:",
+              choices = sort(unique(Grades$Clerkship)))
+
+selectInput("years", "Select an Academic Year:",
+              choices = sort(unique(Grades$AcadYear)),
+              selected = "AY20/21")
+``` 
+
+Row {data-height=20%}
+-------------------------------------
+    
+### <strong>Objective Structured Clinical Examination (OSCE)</strong>
+
+The students complete an OSCE at the end of each clerkship where they are assessed by Standardized Patients (SPs) in various simulated patient encounters.
+
+Each clerkship OSCE has between 2-5 encounters that all students rotate through; scores for each encounter are summarized into an overall OSCE score.
+
+Row {data-height=80%}
+-------------------------------------
+    
+### <strong>OSCE Scores by Ethnicity & Sex</strong>
+    
+```{r}
+reactive_df <- reactive(
+  Grades %>% 
+    filter(Clerkship == input$clerkships, AcadYear == input$years) %>%
+    filter(Sex != "Unspecified") %>%
+    filter(Ethnicity != "American Indian or Alaska Native" & Ethnicity != "Native Hawaiian or Other Pacific Islander" & Ethnicity != "Race and Ethnicity Unknown")%>%
+    filter(Location_new != "NA" & Location_new != "Pioneer Valley Area" & Location_new != "Southeast Area")
+)
+
+  renderPlot(
+  ggplot(reactive_df(), aes(x=OSCE_Score, y=Ethnicity, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+  
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+    
+### <strong>OSCE Scores by Location & Sex</strong>
+
+```{r}
+renderPlot(
+  ggplot(reactive_df(), aes(x=OSCE_Score, y=Location_new, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+ 
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+
+NBME
+=====================================  
+
+Inputs {.sidebar}
+-------------------------------------
+```{r}
+selectInput("clerkships","Select a Clerkship:",
+              choices = sort(unique(Grades$Clerkship)))
+
+selectInput("years", "Select an Academic Year:",
+              choices = sort(unique(Grades$AcadYear)),
+              selected = "AY20/21")
+``` 
+ 
+Row {data-height=20%}
+-------------------------------------
+    
+### <strong>National Board of Medical Examiners (NBME) Subject Exam</strong>
+
+At the end of each clerkship, the students also complete a multiple-choice NBME subject exam specific to each clerkship discipline (e.g., Family Medicine, Medicine, ObGyn, etc.).
+
+These exams are useful resources for academic leaders to assess how UMass Chan students are performing in comparison to students from other medical schools across the nation. 
+
+Row {data-height=80%}
+-------------------------------------
+    
+### <strong>NBME Subject Exam Scores by Ethnicity & Sex</strong>
+    
+```{r}
+reactive_df <- reactive(
+  Grades %>% 
+    filter(Clerkship == input$clerkships, AcadYear == input$years) %>%
+    filter(Sex != "Unspecified") %>%
+    filter(Ethnicity != "American Indian or Alaska Native" & Ethnicity != "Native Hawaiian or Other Pacific Islander" & Ethnicity != "Race and Ethnicity Unknown")%>%
+    filter(Location_new != "NA" & Location_new != "Pioneer Valley Area" & Location_new != "Southeast Area")
+)
+
+  renderPlot(
+  ggplot(reactive_df(), aes(x=NBME_Score, y=Ethnicity, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+  
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+    
+### <strong>NBME Subject Exam Scores by Location & Sex</strong>
+
+```{r}
+renderPlot(
+  ggplot(reactive_df(), aes(x=NBME_Score, y=Location_new, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+ 
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+
+FINAL
+=====================================  
+
+Inputs {.sidebar}
+-------------------------------------
+```{r}
+selectInput("clerkships","Select a Clerkship:",
+              choices = sort(unique(Grades$Clerkship)))
+
+selectInput("years", "Select an Academic Year:",
+              choices = sort(unique(Grades$AcadYear)),
+              selected = "AY20/21")
+```
+ 
+Row {data-height=10%}
+-------------------------------------
+    
+### <strong>Final Clerkship Grades</strong>
+
+Scores from the various grading components (e.g., SPEs, OSCEs, NBME subject exams) are weighted as outlined below and used to calculate final numeric scores.<br>
+
+SPE = 45%, OSCE = 25%, NBME = 30%
+
+Row {data-height=90%}
+-------------------------------------
+    
+### <strong>Final Numeric Scores by Ethnicity & Sex</strong>
+    
+```{r}
+reactive_df <- reactive(
+  Grades %>% 
+    filter(Clerkship == input$clerkships, AcadYear == input$years) %>%
+    filter(Sex != "Unspecified") %>%
+    filter(Ethnicity != "American Indian or Alaska Native" & Ethnicity != "Native Hawaiian or Other Pacific Islander" & Ethnicity != "Race and Ethnicity Unknown")%>%
+    filter(Location_new != "NA" & Location_new != "Pioneer Valley Area" & Location_new != "Southeast Area")
+)
+
+  renderPlot(
+  ggplot(reactive_df(), aes(x=FinalGrade_Numeric, y=Ethnicity, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+  
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+    
+### <strong>Final Numeric Scores by Location & Sex</strong>
+
+```{r}
+renderPlot(
+  ggplot(reactive_df(), aes(x=FinalGrade_Numeric, y=Location_new, fill=Sex)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "summary", fun = "mean", width = 0.40)+ 
+  scale_fill_manual(values = c("blue", "orange"))+
+  scale_y_discrete(limits=rev) +
+  labs(x = "Average", y = "", fill = "")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  guides(fill = guide_legend(reverse = TRUE))+
+  theme(legend.justification = "top")
+)
+```
+
+TRENDS
+=====================================  
+
+Inputs {.sidebar}
+-------------------------------------
+```{r}
+selectInput("clerkships","Clerkship",
+              choices = sort(unique(Grades$Clerkship)))
+```
+ 
+Row {data-height=100%}
+-------------------------------------
+### <strong>Final Letter Grade Distribution Over Time</strong>
+    
+```{r}
+reactive_df2 <- reactive(
+  Grades %>% 
+    filter(Clerkship == input$clerkships) %>%
+    group_by(AcadYear, FinalGrade_Letter) %>%
+    summarize(num=n()) %>%
+    mutate(percent=num/sum(num)*100) %>%
+    filter(FinalGrade_Letter != "Satisfactory" & FinalGrade_Letter != "Incomplete")
+)
+
+renderPlot(
+  ggplot(reactive_df2(),aes(x=percent, y=AcadYear, fill=FinalGrade_Letter)) +
+  geom_bar(position = position_dodge(preserve = "single"), stat = "identity", width = 0.60)+  
+  scale_fill_manual(values = c("limegreen", "orange", "blue"))+
+  labs(y="", x = "Percent", fill="")+
+  scale_x_continuous(limits=c(0, 100))+
+  theme(panel.grid.minor = element_blank())+
+  theme(legend.justification = "top")+
+  guides(fill = guide_legend(reverse = TRUE))
+  
+  )
+```
+
+### <strong>Explanation</strong>
+
+The clerkship letter grade system consists of:
+
+High Honors<br>
+Honors<br>
+Pass<br>
+Fail<br>
+Incomplete<br>
+
+The score ranges/cut-offs for each letter grade are set prior to the start of each academic year.
+
+Academic leaders review trends across time in the distribution of letter grades as grade inflation tends to be a problem in medical education.
+
+NOTES
+=====================================  
+
+Row {data-height=18%}
+-------------------------------------
+
+### <strong>Conclusion</strong>
+
+This type of analysis is done on an annual basis as it is important to let academic leaders know if we start to notice any negative trends with respect to gender or ethnicity inequalities that need to be addressed immediately.  In addition, as we onboard new locations, we pay particular attention to their data as we may need to reach out to those locations to offer additional support and resources for implementing our curriculum to ensure equitable experiences for all students. 
+
+Row {data-height=19%}
+-------------------------------------
+
+### <strong>Technical Notes</strong>
+    
+SPE evaluations use a 4-point scale, those average scores were converted to a percent score [(avg/4)*100] to be in alignment with the other components that are scored on a 0-100% scale. Some clerkship use very specific clinic/ward names, however for this project, I combined all within the same hospital into the broader hospital name (e.g., UMMHC-8 East and UMMHC-C/L were recoded into UMMHC-University Campus).
+
+Row {data-height=63}
+-------------------------------------
+
+### <strong>References</strong>
+
+R Core Team (2024). R: A language and environment for statistical computing. R Foundation for Statistical Computing, Vienna, Austria. URL https://www.R-project.org/.
+    
+Dashboard was generated from this Quarto template. URL https://github.com/jtr13/website-template.
+
+OASIS Curriculum Management and Student Scheduling (2023). Accessed April 2, 2023. https://umassmed.oasisscheduling.com/.
+
+Liaison Committee on Medical Education (2023). Accessed May 6, 2023. https://lcme.org/publications/.
+
+Integrated Postsecondary Education Data System (2023). Accessed April 2, 2023. https://nces.ed.gov/ipeds/.
+
+Fazio, S. B., Papp, K. K., Torre, D. M., & DeFer, T. M. (2013). Grade Inflation in the Internal Medicine Clerkship: A National Survey. Teaching and Learning in Medicine, 25(1), 71–76. https://doi.org/10.1080/10401334.2012.741541
+
+
+
